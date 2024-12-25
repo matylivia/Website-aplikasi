@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Pengingat Tugas</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+        .container {
+            width: 80%;
+            margin: auto;
+            overflow: hidden;
+            padding: 20px;
+            background: white;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            margin-top: 50px;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        form {
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+        input, button {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .agenda-list {
+            margin: 20px 0;
+        }
+        .agenda-item {
+            background: #f9f9f9;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        /* Styling untuk tombol tutup */
+        .close-btn {
+            background-color: red;
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            cursor: pointer;
+            border-radius: 3px;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: none; /* Tidak tampilkan tombol secara default */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sistem Pengingat Tugas</h1>
+
+        <form id="agendaForm">
+            <label for="agenda">Nama Agenda:</label>
+            <input type="text" id="agenda" name="agenda" required>
+
+            <label for="tanggal">Tanggal:</label>
+            <input type="date" id="tanggal" name="tanggal" required>
+
+            <label for="waktu">Waktu:</label>
+            <input type="time" id="waktu" name="waktu" required>
+
+            <button type="submit">Tambah Agenda</button>
+        </form>
+
+        <div class="agenda-list" id="agendaList">
+            <h2>Daftar Agenda</h2>
+            <p>Belum ada agenda yang ditambahkan.</p>
+        </div>
+    </div>
+
+    <!-- Tombol untuk menutup alarm -->
+    <button id="closeBtn" class="close-btn" onclick="closeAlarm()">Tutup Alarm</button>
+
+    <script>
+        const agendaForm = document.getElementById('agendaForm');
+        const agendaList = document.getElementById('agendaList');
+        const closeBtn = document.getElementById('closeBtn'); // Tombol tutup
+
+        // Ambil data agenda dari Local Storage
+        let agendas = JSON.parse(localStorage.getItem('agendas')) || [];
+
+        // Tampilkan data agenda yang tersimpan saat halaman dimuat
+        document.addEventListener('DOMContentLoaded', displayAgendas);
+
+        // Minta izin untuk menampilkan pemberitahuan
+        if (Notification.permission !== 'granted') {
+            Notification.requestPermission();
+        }
+
+        agendaForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+
+            const agenda = document.getElementById('agenda').value;
+            const tanggal = document.getElementById('tanggal').value;
+            const waktu = document.getElementById('waktu').value;
+
+            const newAgenda = {
+                agenda,
+                tanggal,
+                waktu,
+                isNotified: false, // Tambahkan properti untuk menandai apakah sudah diberi notifikasi
+            };
+
+            agendas.push(newAgenda);
+            saveAgendasToLocalStorage();
+            displayAgendas();
+            agendaForm.reset();
+        });
+
+        function displayAgendas() {
+            agendaList.innerHTML = '<h2>Daftar Agenda</h2>';
+
+            if (agendas.length === 0) {
+                agendaList.innerHTML += '<p>Belum ada agenda yang ditambahkan.</p>';
+                return;
+            }
+
+            agendas.forEach((agenda, index) => {
+                const agendaItem = document.createElement('div');
+                agendaItem.classList.add('agenda-item');
+                agendaItem.innerHTML = `
+                    <p><strong>Agenda:</strong> ${agenda.agenda}</p>
+                    <p><strong>Tanggal:</strong> ${agenda.tanggal}</p>
+                    <p><strong>Waktu:</strong> ${agenda.waktu}</p>
+                    <button onclick="removeAgenda(${index})">Hapus</button>
+                `;
+                agendaList.appendChild(agendaItem);
+            });
+        }
+
+        function saveAgendasToLocalStorage() {
+            localStorage.setItem('agendas', JSON.stringify(agendas));
+        }
+
+        function removeAgenda(index) {
+            agendas.splice(index, 1);
+            saveAgendasToLocalStorage();
+            displayAgendas();
+        }
+
+        let alarmInterval;
+        let alarmSound = null; // Mendeklarasikan alarmSound di luar fungsi playAlarm()
+        let currentlyNotifiedAgenda = null; // Variabel untuk menyimpan agenda yang sedang diberi notifikasi
+
+        function checkAlarms() {
+            const now = new Date();
+
+            agendas.forEach((agenda) => {
+                if (agenda.isNotified) return; // Skip agenda yang sudah diberi notifikasi
+
+                const alarmTime = new Date(`${agenda.tanggal}T${agenda.waktu}`);
+
+                if (
+                    now.getFullYear() === alarmTime.getFullYear() &&
+                    now.getMonth() === alarmTime.getMonth() &&
+                    now.getDate() === alarmTime.getDate() &&
+                    now.getHours() === alarmTime.getHours() &&
+                    now.getMinutes() === alarmTime.getMinutes()
+                ) {
+                    playAlarm(agenda.agenda, agenda);
+                }
+            });
+        }
+
+        let activeNotifications = [];
+
+        function playAlarm(agendaName, agenda) {
+            if (currentlyNotifiedAgenda === agenda) return; // Pastikan alarm hanya diputar sekali
+
+            // Tampilkan pemberitahuan tanpa perlu menekan OK
+            if (Notification.permission === 'granted') {
+                const notification = new Notification('Pengingat Tugas', {
+                    body: `Agenda: ${agendaName}`,
+                    icon: 'icon.png', // Optional: icon untuk pemberitahuan
+                });
+
+                // Menyimpan pemberitahuan aktif
+                activeNotifications.push(notification);
+
+                // Tandai agenda yang sudah diberi notifikasi
+                agenda.isNotified = true;
+                saveAgendasToLocalStorage(); // Simpan status ke Local Storage
+            }
+
+            // Tampilkan tombol tutup alarm
+            closeBtn.style.display = 'block'; // Menampilkan tombol penutupan
+
+            // Mulai memutar suara alarm jika belum diputar
+            if (alarmSound === null) {
+                alarmSound = new Audio('alarm.mp3'); // Path ke file suara alarm
+                alarmSound.play();
+            }
+
+            currentlyNotifiedAgenda = agenda; // Menandai bahwa agenda ini sudah diberi notifikasi
+        }
+
+        function closeAlarm() {
+            // Menyembunyikan tombol penutupan setelah alarm ditutup
+            closeBtn.style.display = 'none';
+            activeNotifications.forEach(notification => notification.close()); // Menutup pemberitahuan
+
+            // Menghentikan suara alarm
+            if (alarmSound !== null) {
+                alarmSound.pause(); // Menghentikan pemutaran suara
+                alarmSound.currentTime = 0; // Reset posisi suara ke awal
+                alarmSound = null; // Reset referensi alarmSound
+            }
+
+            // Reset agenda yang sedang diberi notifikasi
+            currentlyNotifiedAgenda = null;
+        }
+
+        // Cek alarm setiap 10 detik
+        alarmInterval = setInterval(checkAlarms, 10000);
+    </script>
+</body>
+</html>
